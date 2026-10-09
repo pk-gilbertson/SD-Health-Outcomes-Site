@@ -27,7 +27,6 @@
   <nav aria-label="Dashboard views">
     <button data-view="explore" aria-current="page">Explore measures</button>
     <button data-view="compare">Compare trends</button>
-    <button data-view="checks">Data checks</button>
     <button data-view="reports">Reports</button>
     <button data-view="sources">Sources &amp; definitions</button>
   </nav>
@@ -63,10 +62,11 @@
 
   <!-- Compare -->
   <section id="compare" class="view" hidden>
-    <div class="panelhead"><div><h2>Which outcomes moved together?</h2><p>Pick up to three measures. Indexing puts large and small counts on one scale, so you compare direction and size of change.</p></div></div>
+    <div class="panelhead"><div><h2>Which outcomes moved together?</h2><p>Put up to three measures on one chart. Suggestions come from comparing how each measure changed from one year to the next.</p></div></div>
     <div class="chartgrid">
       <article class="panel">
         <div class="comparecontrols">
+          <div id="chips" class="chips" aria-label="Measures in this comparison"></div>
           <fieldset class="seg"><legend>Show as</legend>
             <label><input type="radio" name="cmode" value="index" checked><span>Indexed (<span class="baseyr">2015</span> = 100)</span></label>
             <label><input type="radio" name="cmode" value="count"><span>Counts</span></label>
@@ -77,27 +77,34 @@
         <p class="note" id="comparenote"></p>
         <details><summary>Show as a table</summary><div class="tablewrap" id="comparetable"></div></details>
       </article>
-      <article class="panel">
-        <h3>Choose measures</h3>
-        <p class="note">Up to three at a time. The list follows your filters.</p>
-        <div id="picker" class="picker"></div>
-      </article>
+      <aside class="panel suggest">
+        <h3>Suggested additions</h3>
+        <p class="note" id="suggestnote"></p>
+        <div id="suggestions"></div>
+        <details class="browse"><summary>Browse all measures</summary><div id="picker" class="picker"></div></details>
+      </aside>
     </div>
-    <article class="panel">
-      <h3>Biggest changes since <span class="baseyr">2015</span></h3>
-      <p class="note">Percent change in the count from <span class="baseyr">2015</span> to each measure’s latest year. Red bars are increases, blue bars are decreases.</p>
-      <div id="changechart"></div>
-    </article>
-  </section>
 
-  <!-- Data checks -->
-  <section id="checks" class="view" hidden>
-    <div class="panelhead"><div><h2>Where the reports don’t add up</h2><p>The pipeline checks each table’s own arithmetic and compares overlapping reports. Values tied to a failed check are withheld until someone confirms them against the original.</p></div></div>
-    <div id="checklist"></div>
     <article class="panel">
-      <h3>Revisions between releases</h3>
-      <p class="note">Provisional figures change as death records are filed. These are the changes larger than 2%. Smaller revisions are noted on each measure.</p>
-      <div class="tablewrap" id="revisions"></div>
+      <div class="panelhead"><div>
+        <h3>Where each measure stands against 2015–2019</h3>
+        <p class="note">Percent difference from each measure’s 2015–2019 average, at its 2020–21 peak and in its two latest years. Groups follow the pattern each measure shows. Choose a group to chart it.</p>
+      </div></div>
+      <div class="shiftkey" aria-hidden="true"><span><i class="k-peak"></i>2020–21 peak</span><span><i class="k-now"></i>Latest two years</span><span><b class="k-zero"></b>2015–2019 average</span></div>
+      <div id="shift"></div>
+    </article>
+
+    <article class="panel">
+      <h3>Strongest year-to-year matches</h3>
+      <p class="note" id="pairsnote"></p>
+      <div id="pairs" class="pairs"></div>
+      <details><summary>How these are found</summary>
+        <div class="prose small">
+          <p>Each measure is turned into its percent change from the year before. Comparing changes rather than counts keeps population growth and aging from making every cause look related.</p>
+          <p>For each pair we measure how closely those changes line up (a correlation from −1 to 1), count the years both moved the same way, and repeat the comparison without 2020 and 2021 to see whether the pandemic years carry the pattern. Totals are never paired with their own causes.</p>
+          <p>With about ten yearly changes per measure, strong-looking matches happen by chance. Treat these as leads to check against rates, county data, or how deaths are coded. Moving together does not mean one causes the other.</p>
+        </div>
+      </details>
     </article>
   </section>
 
@@ -124,11 +131,21 @@
         <li><strong>All ages versus excluding infants:</strong> DOH’s <em>Causes of Death</em> tables leave out deaths of infants under one year old. Its <em>Mortality Reports</em> count all ages. The two are kept as separate series and never joined in one line.</li>
         <li><strong>Provisional:</strong> the latest year in a Mortality Report changes as records arrive. Provisional points are drawn hollow. Earlier releases are kept and shown as revisions.</li>
         <li><strong>Suppressed:</strong> values DOH hides to protect privacy stay hidden. They show as gaps, never zeros.</li>
-        <li><strong>Withheld:</strong> values that fail a data check are left off the charts until confirmed. The <a href="#" data-goto="checks">Data checks</a> view explains each one.</li>
+        <li><strong>Withheld:</strong> values that fail a data check are left off the charts until confirmed. The measure’s panel explains which check failed.</li>
         <li><strong>Year-to-date tables:</strong> monthly reports show January to the current month. They are never treated as full-year totals.</li>
       </ul>
       <h3>How overlapping reports are reconciled</h3>
       <dl class="rules" id="rules"></dl>
+      <h3>Data checks</h3>
+      <p>Before a value appears, the pipeline checks each table’s own arithmetic and compares reports that cover the same years:</p>
+      <ul>
+        <li>Each row’s yearly values add up to its printed total.</li>
+        <li>No single cause is larger than the table’s total deaths.</li>
+        <li>All-ages deaths minus deaths excluding infants gives a believable number of infant deaths.</li>
+        <li>A count excluding infants is never larger than the all-ages count.</li>
+        <li>Final figures don’t change between editions of the same report.</li>
+      </ul>
+      <div id="openchecks"></div>
       <h3>What would make this more useful next?</h3>
       <p>Population figures would turn counts into rates. County tables would allow maps and comparisons between places. Questions about whether programs work, or how health connects to education and employment, need record-level data shared under data use agreements. That is beyond what public reports can answer.</p>
       <button id="download" type="button">Download all values (CSV)</button>

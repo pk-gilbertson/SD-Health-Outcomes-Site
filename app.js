@@ -28,7 +28,7 @@ const CHECK_TITLES = {
   material_revision: 'A provisional figure was revised by more than 2%',
 };
 
-let meta, catalog = [], themes = [], reports = [], methods = {};
+let meta, catalog = [], themes = [], reports = [], methods = {}, rel = {};
 let measures = [], filtered = [], chosen = null, view = 'explore';
 let sortKey = 'latest', sortDir = 'desc';
 let compare = [];                     // [{id, slot}]; slot is kept while a measure stays selected
@@ -157,7 +157,7 @@ async function renderDetail() {
     ${ind.note ? `<p class="callout">${esc(ind.note)}</p>` : ''}
     <p class="big">${fmt(last.value)}</p>
     <p class="bigsub">${esc(ind.unit)} in ${esc(last.period)}${last.provisional ? ' (provisional)' : ''}. ${pct == null ? '' : changeHTML(pct) + ' from ' + esc(prev.period) + '.'}</p>
-    ${held.length ? `<p class="note"><span class="badge withheld">Withheld</span> ${esc(held.map((p) => p.period).join(', '))} failed a data check. <a href="#" data-goto="checks">See why</a>.</p>` : ''}
+    ${held.length ? heldNote(held) : ''}
     <div id="detailchart" class="chartbox" role="img" aria-label="${esc(summaryText(ind, s))}"></div>
     <p class="note">${esc(summaryText(ind, s))} Hollow points are provisional.</p>
     <dl>
@@ -177,6 +177,22 @@ async function renderDetail() {
   $('addcompare').onclick = () => { if (!inCompare) addCompare(m.id); setView('compare'); };
   lineChart($('detailchart'), [{ name: ind.short_label, color: css('--s1'), points: s.points.map((p) => ({ year: p.year, value: p.value, prov: p.provisional, withheld: p.withheld, src: p.source })) }],
     { height: 240, unit: ind.unit, showHeld: true });
+}
+
+const CHECK_PLAIN = {
+  row_total_mismatch: 'The yearly values in this row don’t add up to the total printed beside them.',
+  cross_series_infant_gap: 'Compared with the all-ages count, this value implies far more infant deaths than South Dakota has in a year.',
+  excl_infant_exceeds_all_ages: 'This count is larger than the all-ages count for the same year, which can’t happen.',
+  component_exceeds_total: 'This cause is larger than the table’s total deaths.',
+};
+function heldNote(held) {
+  const reps = new Set(held.map((p) => p.source.report)), periods = held.map((p) => String(p.period));
+  const why = (methods.validation || []).filter((v) => v.severity === 'error' && reps.has(v.source_report) &&
+    String(v.period).split(',').some((x) => periods.includes(x)));
+  const extra = why.find((v) => v.check === 'row_total_mismatch')?.message.match(/should be ([\d,]+)/);
+  return `<div class="heldbox"><p><span class="badge withheld">Withheld</span> The ${esc(periods.join(', '))} value is left off this chart until the Department of Health confirms it.</p>
+    <ul>${[...new Set(why.map((v) => CHECK_PLAIN[v.check] || v.message))].map((t) => `<li>${esc(t)}</li>`).join('')}</ul>
+    ${extra ? `<p class="note">If the printed total is right, the value should be ${esc(extra[1])}.</p>` : ''}</div>`;
 }
 
 function valuesTable(s) {
@@ -279,12 +295,120 @@ function niceTicks(lo, hi, n) {
 }
 
 /* ---------- compare view ---------- */
+const nameOf = (id) => measures.find((x) => x.id === id)?.short_label || id;
 function addCompare(id) {
   if (compare.some((c) => c.id === id) || compare.length >= MAX_COMPARE) return;
   const used = new Set(compare.map((c) => c.slot));
   compare.push({ id, slot: [0, 1, 2].find((s) => !used.has(s)) });   // color follows the measure, not its position
 }
+function setCompare(ids) { compare = []; ids.slice(0, MAX_COMPARE).forEach(addCompare); renderCompare(); }
+function removeCompare(id) { compare = compare.filter((c) => c.id !== id); renderCompare(); }
 document.querySelectorAll('input[name=cmode]').forEach((r) => (r.onchange = renderCompare));
+
+function pairSentence(p, from) {
+  return p.direction === 'together'
+    ? `Rose and fell with ${esc(nameOf(from))} in ${p.same_direction_years} of ${p.years} years`
+    : `Moved opposite to ${esc(nameOf(from))} in ${p.years - p.same_direction_years} of ${p.years} years`;
+}
+function pairTags(p) {
+  return `<span class="tag ${p.direction}">${p.direction === 'together' ? 'Moves with' : 'Moves opposite'}</span>` +
+    (p.holds_without_pandemic ? '<span class="tag plain">Holds without 2020–21</span>' : '<span class="tag plain">Mostly 2020–21</span>') +
+    (p.p_value < 0.05 ? '' : '<span class="tag plain">Could be chance</span>');
+}
+
+/* Candidates not on the chart whose year-to-year changes lined up (|r| >= 0.5) with something on it. */
+function suggestionsFor(selected) {
+  const out = new Map();
+  for (const p of rel.pairs || []) {
+    if (Math.abs(p.r) < 0.5) continue;
+    const inA = selected.includes(p.a), inB = selected.includes(p.b);
+    if (inA === inB) continue;
+    const cand = inA ? p.b : p.a, from = inA ? p.a : p.b;
+    if (!filtered.some((m) => m.id === cand)) continue;               // follow the filters
+    const prev = out.get(cand);
+    if (!prev || Math.abs(p.r) > Math.abs(prev.p.r)) out.set(cand, { id: cand, from, p });
+  }
+  return [...out.values()].sort((x, y) => Math.abs(y.p.r) - Math.abs(x.p.r)).slice(0, 4);
+}
+
+function renderSuggestions() {
+  const sel = compare.map((c) => c.id);
+  const full = compare.length >= MAX_COMPARE;
+  if (!sel.length) {
+    $('suggestnote').textContent = 'Start with one of the strongest pairs, or add any measure and this list fills with others that moved with it.';
+    $('suggestions').innerHTML = topPairsHTML(3, true);
+  } else {
+    const sug = suggestionsFor(sel);
+    $('suggestnote').textContent = sug.length
+      ? `Measures whose year-to-year changes lined up with ${sel.map(nameOf).join(', ')}.${full ? ' Remove one from the chart to add another.' : ''}`
+      : `Nothing else moved consistently with ${sel.map(nameOf).join(', ')}. Try another measure, or browse all of them.`;
+    $('suggestions').innerHTML = sug.map((s) => `<div class="sugg">
+        <div><strong>${esc(nameOf(s.id))}</strong><p>${pairSentence(s.p, s.from)}.</p>
+        <div class="tags">${pairTags(s.p)}</div>${s.p.note ? `<p class="note">${esc(s.p.note)}</p>` : ''}</div>
+        <button type="button" data-add="${s.id}" ${full ? 'disabled' : ''} aria-label="Add ${esc(nameOf(s.id))} to the chart">Add</button></div>`).join('');
+  }
+  $('suggestions').querySelectorAll('[data-add]').forEach((b) => (b.onclick = () => { addCompare(b.dataset.add); renderCompare(); }));
+  $('suggestions').querySelectorAll('[data-pair]').forEach((b) => (b.onclick = () => setCompare(b.dataset.pair.split(','))));
+}
+
+function topPairsHTML(n, compact) {
+  const list = (rel.pairs || []).filter((p) => Math.abs(p.r) >= 0.5 && filtered.some((m) => m.id === p.a) && filtered.some((m) => m.id === p.b)).slice(0, n);
+  if (!list.length) return '<p class="note">No pairs among the filtered measures moved consistently together.</p>';
+  const r = (v) => (v < 0 ? '−' : '') + Math.abs(v).toFixed(2);
+  return list.map((p) => `<div class="sugg${compact ? '' : ' wide'}">
+      <div><strong>${esc(nameOf(p.a))} and ${esc(nameOf(p.b))}</strong>
+      <p>${p.direction === 'together' ? `Moved the same direction in ${p.same_direction_years} of ${p.years} years` : `Moved in opposite directions in ${p.years - p.same_direction_years} of ${p.years} years`}, ${p.first_year}–${p.last_year}.${compact ? '' : ` Correlation ${r(p.r)}${p.r_without_2020_21 != null ? `, ${r(p.r_without_2020_21)} without 2020–21` : ''}.`}</p>
+      <div class="tags">${pairTags(p)}</div>${p.note && !compact ? `<p class="note">${esc(p.note)}</p>` : ''}</div>
+      <button type="button" data-pair="${p.a},${p.b}">Chart this pair</button></div>`).join('');
+}
+
+function renderPairs() {
+  const m = rel.method || {};
+  const sig = (rel.pairs || []).filter((p) => p.p_value < 0.05).length;
+  $('pairsnote').textContent = m.pairs_tested
+    ? `${m.pairs_tested} pairs were tested. If none were truly related, about ${fmt(m.expected_p05_by_chance)} would look this strong by chance; ${sig} do. Read these as leads, not findings.`
+    : '';
+  $('pairs').innerHTML = topPairsHTML(6, false);
+  $('pairs').querySelectorAll('[data-pair]').forEach((b) => (b.onclick = () => { setCompare(b.dataset.pair.split(',')); $('compare').scrollIntoView({ behavior: 'smooth' }); }));
+}
+
+const TOTALS = ['deaths_all', 'deaths_all_excl_infant'];
+const PATTERNS = [
+  ['stayed_up', 'Rose with the pandemic and stayed up', 'Peaked in 2020–21 and remain at least 5% above 2015–2019.'],
+  ['rising_other', 'Rising without a pandemic spike', 'Up 10% or more with little change in 2020–21, so something other than the pandemic is likely involved.'],
+  ['returned', 'Spiked, then came back', 'Peaked in 2020–21 and are now within 5% of 2015–2019.'],
+  ['steady', 'Little change', 'Within 5% of 2015–2019 at the peak and now.'],
+  ['lower', 'Lower than before', 'At least 5% below the 2015–2019 average.'],
+];
+
+function renderShift() {
+  const rows = (rel.pandemic_shift || []).filter((d) => filtered.some((m) => m.id === d.id));
+  if (!rows.length) { $('shift').innerHTML = '<p class="note">No measures match your filters.</p>'; return; }
+  const all = rows.flatMap((d) => [d.pct, d.pandemic_peak_pct ?? 0]);
+  const lo = Math.min(-15, ...all) * 1.1, hi = Math.max(15, ...all) * 1.1;
+  const X = (v) => ((v - lo) / (hi - lo)) * 100;
+  const sign = (v) => (v > 0 ? '+' : v < 0 ? '−' : '') + fmt(Math.abs(v)) + '%';
+  $('shift').innerHTML = PATTERNS.map(([key, title, desc]) => {
+    const g = rows.filter((d) => d.pattern === key);
+    if (!g.length) return '';
+    return `<div class="shiftgroup"><div class="shifthead"><div><h4>${esc(title)}</h4><p class="note">${esc(desc)}</p></div>
+        ${(() => { const ids = g.map((d) => d.id).filter((id) => !TOTALS.includes(id));   // totals overwhelm causes; leave them out
+          return ids.length ? `<button type="button" data-group="${ids.join(',')}">${ids.length > MAX_COMPARE ? `Chart the top ${MAX_COMPARE}` : ids.length === 1 ? 'Chart this' : 'Chart these'}</button>` : ''; })()}</div>
+      ${g.map((d) => {
+        const pk = d.pandemic_peak_pct ?? 0, a = Math.min(pk, d.pct), b = Math.max(pk, d.pct);
+        return `<div class="shiftrow" title="${esc(nameOf(d.id))}: ${fmt(d.pre_avg)} a year in 2015–2019, ${fmt(d.recent_avg)} in ${esc(d.recent_years)}">
+          <button type="button" class="linkish" data-id="${d.id}">${esc(nameOf(d.id))}${TOTALS.includes(d.id) ? '<small> (all causes)</small>' : ''}</button>
+          <div class="dumb" role="img" aria-label="${esc(nameOf(d.id))}: ${sign(pk)} at the ${d.pandemic_peak_year} peak, ${sign(d.pct)} in ${esc(d.recent_years)}, compared with 2015 to 2019">
+            <span class="zero" style="left:${X(0)}%"></span>
+            <span class="span" style="left:${X(a)}%;width:${X(b) - X(a)}%"></span>
+            <span class="pk" style="left:${X(pk)}%"></span><span class="now" style="left:${X(d.pct)}%"></span>
+          </div>
+          <span class="val">${sign(d.pct)}<small>peak ${sign(pk)}</small></span></div>`;
+      }).join('')}</div>`;
+  }).join('');
+  $('shift').querySelectorAll('[data-group]').forEach((b) => (b.onclick = () => { setCompare(b.dataset.group.split(',')); $('compare').scrollIntoView({ behavior: 'smooth' }); }));
+  $('shift').querySelectorAll('[data-id]').forEach((b) => (b.onclick = () => selectMeasure(b.dataset.id)));
+}
 
 function renderCompare() {
   const mode = document.querySelector('input[name=cmode]:checked').value;
@@ -295,12 +419,14 @@ function renderCompare() {
       <span class="sw" style="background:${c ? css(SLOTS[c.slot]) : 'transparent'}"></span>
       <span>${esc(m.short_label)}<br><small>${esc(m.headline.label)}</small></span></label>`;
   }).join('') || '<p class="note">No measures match your filters.</p>';
-  $('picker').querySelectorAll('input').forEach((i) => (i.onchange = () => {
-    if (i.checked) addCompare(i.value); else compare = compare.filter((c) => c.id !== i.value);
-    renderCompare();
-  }));
+  $('picker').querySelectorAll('input').forEach((i) => (i.onchange = () => (i.checked ? (addCompare(i.value), renderCompare()) : removeCompare(i.value))));
 
   const chosenM = compare.map((c) => ({ ...c, m: measures.find((x) => x.id === c.id) })).filter((c) => c.m);
+  $('chips').innerHTML = chosenM.map((c) => `<span class="chip"><i style="background:${css(SLOTS[c.slot])}"></i>${esc(c.m.short_label)}
+    <button type="button" data-remove="${c.id}" aria-label="Remove ${esc(c.m.short_label)}">×</button></span>`).join('') ||
+    '<span class="note">Nothing on the chart yet.</span>';
+  $('chips').querySelectorAll('[data-remove]').forEach((b) => (b.onclick = () => removeCompare(b.dataset.remove)));
+
   // indexed base: BASE_YEAR when every chosen measure has it, else the first year they all share
   const common = chosenM.length ? [...new Set(chosenM.flatMap((c) => pointsOf(c.m).map((p) => p.year)))].sort()
     .filter((yr) => chosenM.every((c) => valueAt(c.m, yr))) : [];
@@ -311,12 +437,12 @@ function renderCompare() {
       value: p.value == null ? null : mode === 'index' ? p.value / valueAt(c.m, base) * 100 : p.value })),
   }));
   document.querySelectorAll('#compare .seg .baseyr').forEach((e) => (e.textContent = base ?? BASE_YEAR));
-  $('legend').innerHTML = series.map((s) => `<span><i style="background:${s.color}"></i>${esc(s.name)}</span>`).join('');
+  $('legend').innerHTML = '';   // the chips above the chart carry each measure's color
   if (!series.length) {
-    $('comparechart').innerHTML = '<p class="note">Choose up to three measures on the right to compare their trends.</p>';
+    $('comparechart').innerHTML = '<p class="note empty">Add a measure from the suggestions, or chart one of the groups below.</p>';
     $('comparenote').textContent = ''; $('comparetable').innerHTML = '';
   } else if (mode === 'index' && base == null) {
-    $('comparechart').innerHTML = '<p class="note">These measures have no year in common, so they can’t be indexed. Switch to counts.</p>';
+    $('comparechart').innerHTML = '<p class="note empty">These measures have no year in common, so they can’t be indexed. Switch to counts.</p>';
   } else {
     lineChart($('comparechart'), series, { height: 340, indexed: mode === 'index' });
     $('comparenote').textContent = mode === 'index'
@@ -326,51 +452,7 @@ function renderCompare() {
     $('comparetable').innerHTML = `<table><thead><tr><th scope="col">Year</th>${series.map((s) => `<th scope="col">${esc(s.name)}</th>`).join('')}</tr></thead><tbody>${
       yrs.map((y) => `<tr><td>${y}</td>${series.map((s) => { const p = s.points.find((q) => q.year === y); return `<td>${p?.withheld ? 'Withheld' : fmt(p?.value == null ? null : Math.round(p.value * 10) / 10)}</td>`; }).join('')}</tr>`).join('')}</tbody></table>`;
   }
-  renderChangeBars(avail);
-}
-
-function renderChangeBars(avail) {
-  const rows = avail.map((m) => ({ m, c: longChange(m) })).filter((r) => r.c);
-  const withPct = rows.filter((r) => r.c.pct != null).sort((a, b) => b.c.pct - a.c.pct);
-  const max = Math.max(1, ...withPct.map((r) => Math.abs(r.c.pct)));
-  $('changechart').innerHTML = withPct.map(({ m, c }) => {
-    const w = Math.abs(c.pct) / max * 50;
-    return `<div class="barrow" title="${esc(m.short_label)}: ${c.from} to ${c.to}">
-      <button type="button" data-id="${m.id}">${esc(m.short_label)}<br><span class="muted">${esc(m.headline.label)}, ${c.from}–${c.to}</span></button>
-      <div class="bartrack" aria-hidden="true"><span class="mid"></span><span class="fill ${c.pct >= 0 ? 'upbar' : 'downbar'}" style="${c.pct >= 0 ? `left:50%;width:${w}%` : `right:50%;width:${w}%`}"></span></div>
-      <span class="val">${changeHTML(c.pct)}</span></div>`;
-  }).join('') + rows.filter((r) => r.c.pct == null).map(({ m, c }) =>
-    `<p class="note">${esc(m.short_label)} had no deaths in ${c.from}, so a percent change can’t be shown.</p>`).join('');
-  $('changechart').querySelectorAll('button[data-id]').forEach((b) => (b.onclick = () => selectMeasure(b.dataset.id)));
-}
-
-/* ---------- data checks ---------- */
-function renderChecks() {
-  const v = methods.validation || [];
-  const sevOrder = { error: 0, warn: 1, info: 2 };
-  const cards = [...v].sort((a, b) => sevOrder[a.severity] - sevOrder[b.severity]).map((c) => {
-    const rep = reports.find((r) => r.title === c.source_report);
-    const what = c.severity === 'error' ? 'Withheld on this site until DOH confirms the original.'
-      : c.severity === 'warn' ? 'Shown, flagged for a reviewer.' : 'Logged for the record.';
-    return `<article class="check-card ${c.severity}">
-      <p class="kind">${c.severity === 'error' ? 'Failed check' : c.severity === 'warn' ? 'Needs a look' : 'Note'}</p>
-      <h3>${esc(CHECK_TITLES[c.check] || c.check)}</h3>
-      <p><strong>Report:</strong> ${rep ? `<a href="${esc(rep.url)}${c.page ? '#page=' + esc(c.page) : ''}" target="_blank" rel="noopener">${esc(c.source_report)}</a>` : esc(c.source_report)}${c.page ? `, page ${esc(c.page)}` : ''}. <strong>Row:</strong> ${esc(c.row)}${c.period ? `. <strong>Period:</strong> ${esc(c.period.split(',')[0])}` : ''}.</p>
-      <p>${esc(c.message)}</p>
-      <p class="note">${what}</p></article>`;
-  }).join('');
-  $('checklist').innerHTML = (cards || '<article class="check-card ok-card"><h3>No open findings</h3><p>Every table the pipeline read passed its checks.</p></article>') +
-    `<article class="panel"><h3>Checks run on every table</h3><ul>
-      <li>Each row’s yearly values add up to its printed total.</li>
-      <li>No single cause is larger than the table’s total deaths.</li>
-      <li>All-ages deaths minus deaths excluding infants gives a believable number of infant deaths.</li>
-      <li>A count excluding infants is never larger than the all-ages count.</li>
-      <li>Final figures don’t change between editions of the same report.</li>
-      <li>Provisional figures that move by more than 2% between releases are logged.</li></ul></article>`;
-  const revs = methods.revisions_material || [];
-  $('revisions').innerHTML = revs.length ? `<table><thead><tr><th scope="col">Measure</th><th scope="col">Year</th><th scope="col">Earlier</th><th scope="col">Now</th><th scope="col">Change</th></tr></thead><tbody>${
-    revs.map((r) => `<tr><td>${esc(measures.find((x) => x.id === r.indicator_id)?.short_label || r.indicator_id)}</td><td>${esc(r.period)}</td><td>${fmt(+r.value)}</td><td>${fmt(+r.current_value)}</td><td>${changeHTML(+r.revision_pct)}</td></tr>`).join('')}</tbody></table>`
-    : '<p class="note">No revisions larger than 2% so far.</p>';
+  renderSuggestions(); renderShift(); renderPairs();
 }
 
 /* ---------- reports ---------- */
@@ -400,7 +482,7 @@ function renderReports() {
 /* ---------- start ---------- */
 async function init() {
   try {
-    [meta, catalog, themes, reports, methods] = await Promise.all(['meta.json', 'catalog.json', 'themes.json', 'reports.json', 'methods.json'].map(getJSON));
+    [meta, catalog, themes, reports, methods, rel] = await Promise.all(['meta.json', 'catalog.json', 'themes.json', 'reports.json', 'methods.json', 'relationships.json'].map(getJSON));
   } catch (e) {
     $('status').innerHTML = `<strong>The data didn’t load.</strong> ${esc(e.message)}. Open this page through a web server, for example <code>python -m http.server 8000</code>.`;
     return;
@@ -415,15 +497,20 @@ async function init() {
   $('rdomain').innerHTML += Object.entries(DOMAINS).filter(([k]) => reports.some((r) => r.domain === k)).map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join('');
   const active = measures.filter((m) => m.headline?.latest).length;
   const errors = (methods.validation || []).filter((v) => v.severity === 'error').length;
+  const heldIds = measures.filter((m) => pointsOf(m).some((p) => p.withheld)).map((m) => m.id);
   $('metrics').innerHTML = `
     <div class="metric"><span>Measures with data</span><strong>${active}</strong><small>of ${measures.length} defined; ${measures.length - active} waiting on table mapping</small></div>
     <div class="metric"><span>Values traced to a report page</span><strong>${fmt(meta.counts.rows)}</strong><small>From ${reports.filter((r) => r.used_by.length).length} of ${meta.counts.reports} DOH reports so far</small></div>
-    <div class="metric"><span>Values withheld</span><strong>${meta.counts.withheld}</strong><small>${errors} open data check${errors === 1 ? '' : 's'}. <a href="#" data-goto="checks">See the checks</a></small></div>`;
+    <div class="metric"><span>Values withheld</span><strong>${meta.counts.withheld}</strong><small>${errors} open data check${errors === 1 ? '' : 's'}.${heldIds.length ? ` <a href="#" data-measure="${heldIds[0]}">See ${esc(nameOf(heldIds[0]))}</a>` : ''}</small></div>`;
   $('rules').innerHTML = (methods.rules || []).map((r) => `<dt>${esc(r.problem)}</dt><dd>${esc(r.rule)}</dd>`).join('');
   $('download').onclick = () => { location.href = 'data/downloads/indicators.csv'; };
   // a starting comparison: the deaths-of-despair measures that have data
   (themes.find((t) => t.id === 'deaths_of_despair')?.active || []).concat(['deaths_falls']).forEach(addCompare);
-  renderChecks(); renderReports(); apply();
+  $('openchecks').innerHTML = errors
+    ? `<p>${errors} check${errors === 1 ? ' is' : 's are'} open. The affected value${meta.counts.withheld === 1 ? ' is' : 's are'} withheld: ${heldIds.map((id) => `<a href="#" data-measure="${id}">${esc(nameOf(id))}</a>`).join(', ')}.</p>`
+    : '<p>All checks pass on the tables read so far.</p>';
+  document.addEventListener('click', (e) => { const l = e.target.closest('[data-measure]'); if (l) { e.preventDefault(); selectMeasure(l.dataset.measure); } });
+  renderReports(); apply();
   let t; addEventListener('resize', () => { clearTimeout(t); t = setTimeout(() => { if (view === 'compare') renderCompare(); else renderDetail(); }, 150); });
   matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { renderDetail(); if (view === 'compare') renderCompare(); });
 }
