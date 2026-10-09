@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>South Dakota Health Outcomes</title>
+<meta name="description" content="Explore South Dakota health outcome trends from Department of Health reports, with every number linked to its source page.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%23112c41'/><path d='M2 11 L6 7 L9 9 L14 4' fill='none' stroke='%237dd9d6' stroke-width='2'/></svg>">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <div class="brand"><span class="mark">SD</span><div>HEALTH OUTCOMES<small>South Dakota health outcomes explorer</small></div></div>
+  <span class="prototype">Public-data prototype</span>
+</header>
+<div id="banner" class="banner" role="note" hidden><strong>Unreviewed preview.</strong> These figures have not been signed off by the Department of Health. Do not cite or share them.</div>
+<main>
+  <div class="intro">
+    <div>
+      <p class="eyebrow">PUBLIC HEALTH + VITAL STATISTICS</p>
+      <h1>How is South Dakota’s health changing?</h1>
+      <p>Follow causes of death and other outcomes over time. Every number links to the Department of Health report page it came from.</p>
+    </div>
+    <div class="edition" id="edition">STATEWIDE SNAPSHOT<br><strong>Loading…</strong></div>
+  </div>
+
+  <nav aria-label="Dashboard views">
+    <button data-view="explore" aria-current="page">Explore measures</button>
+    <button data-view="compare">Compare trends</button>
+    <button data-view="checks">Data checks</button>
+    <button data-view="reports">Reports</button>
+    <button data-view="sources">Sources &amp; definitions</button>
+  </nav>
+
+  <section id="filters" class="filters">
+    <label>Find a measure<input id="search" type="search" placeholder="Try suicide, cancer, falls…"></label>
+    <label>Topic<select id="topic"><option value="">All topics</option></select></label>
+    <label class="check"><input type="checkbox" id="showPending"> Include measures not mapped yet</label>
+    <button id="reset" class="subtle" type="button">Reset</button>
+  </section>
+  <div id="status" role="status">Loading public data…</div>
+
+  <!-- Explore -->
+  <section id="explore" class="view">
+    <div id="metrics" class="metrics"></div>
+    <div class="workspace">
+      <section class="panel">
+        <div class="panelhead"><div><h2>Measures to explore</h2><p>Choose a measure to see its trend, sources, and revisions.</p></div></div>
+        <p class="note">These are counts of deaths, not rates. A rising count can reflect a growing or aging population.</p>
+        <div class="tablewrap"><table>
+          <thead><tr>
+            <th id="heading-label" scope="col" aria-sort="none"><button class="column-sort" data-sort="label">Measure<span id="caret-label" aria-hidden="true">▾</span></button></th>
+            <th id="heading-latest" scope="col" aria-sort="none"><button class="column-sort" data-sort="latest">Latest<span id="caret-latest" aria-hidden="true">▾</span></button></th>
+            <th id="heading-oneyr" scope="col" aria-sort="none"><button class="column-sort" data-sort="oneyr">1-year change<span id="caret-oneyr" aria-hidden="true">▾</span></button></th>
+            <th id="heading-long" scope="col" aria-sort="none"><button class="column-sort" data-sort="long">Change since <span class="baseyr">2015</span><span id="caret-long" aria-hidden="true">▾</span></button></th>
+          </tr></thead>
+          <tbody id="rows"></tbody>
+        </table></div>
+      </section>
+      <aside class="panel detail" id="detail" aria-live="polite"></aside>
+    </div>
+  </section>
+
+  <!-- Compare -->
+  <section id="compare" class="view" hidden>
+    <div class="panelhead"><div><h2>Which outcomes moved together?</h2><p>Pick up to three measures. Indexing puts large and small counts on one scale, so you compare direction and size of change.</p></div></div>
+    <div class="chartgrid">
+      <article class="panel">
+        <div class="comparecontrols">
+          <fieldset class="seg"><legend>Show as</legend>
+            <label><input type="radio" name="cmode" value="index" checked><span>Indexed (<span class="baseyr">2015</span> = 100)</span></label>
+            <label><input type="radio" name="cmode" value="count"><span>Counts</span></label>
+          </fieldset>
+        </div>
+        <div id="legend" class="legend"></div>
+        <div id="comparechart" class="chartbox"></div>
+        <p class="note" id="comparenote"></p>
+        <details><summary>Show as a table</summary><div class="tablewrap" id="comparetable"></div></details>
+      </article>
+      <article class="panel">
+        <h3>Choose measures</h3>
+        <p class="note">Up to three at a time. The list follows your filters.</p>
+        <div id="picker" class="picker"></div>
+      </article>
+    </div>
+    <article class="panel">
+      <h3>Biggest changes since <span class="baseyr">2015</span></h3>
+      <p class="note">Percent change in the count from <span class="baseyr">2015</span> to each measure’s latest year. Red bars are increases, blue bars are decreases.</p>
+      <div id="changechart"></div>
+    </article>
+  </section>
+
+  <!-- Data checks -->
+  <section id="checks" class="view" hidden>
+    <div class="panelhead"><div><h2>Where the reports don’t add up</h2><p>The pipeline checks each table’s own arithmetic and compares overlapping reports. Values tied to a failed check are withheld until someone confirms them against the original.</p></div></div>
+    <div id="checklist"></div>
+    <article class="panel">
+      <h3>Revisions between releases</h3>
+      <p class="note">Provisional figures change as death records are filed. These are the changes larger than 2%. Smaller revisions are noted on each measure.</p>
+      <div class="tablewrap" id="revisions"></div>
+    </article>
+  </section>
+
+  <!-- Reports -->
+  <section id="reports" class="view" hidden>
+    <div class="panelhead"><div><h2>Every report the Department of Health publishes</h2><p>The full A–Z list, grouped so each report series shows all its editions. Links open the original documents.</p></div></div>
+    <div class="filters">
+      <label>Search titles<input id="rsearch" type="search" placeholder="Try suicide, PRAMS, lead…"></label>
+      <label>Topic<select id="rdomain"><option value="">All topics</option></select></label>
+      <label class="check"><input type="checkbox" id="rused"> Used on this site</label>
+    </div>
+    <p class="note" id="rcount"></p>
+    <div id="reportlist" class="reportlist"></div>
+  </section>
+
+  <!-- Sources -->
+  <section id="sources" class="view" hidden>
+    <article class="panel prose">
+      <h2>Know what the numbers mean</h2>
+      <p>This prototype reorganizes figures already published by the South Dakota Department of Health. It does not replace those reports, estimate anything, or contain record-level data. <span id="builtinfo"></span></p>
+      <h3>Important distinctions</h3>
+      <ul>
+        <li><strong>Counts, not rates:</strong> every measure here is a number of deaths. Rates per 100,000 residents will come once population figures are added. A rising count can come from a larger or older population.</li>
+        <li><strong>All ages versus excluding infants:</strong> DOH’s <em>Causes of Death</em> tables leave out deaths of infants under one year old. Its <em>Mortality Reports</em> count all ages. The two are kept as separate series and never joined in one line.</li>
+        <li><strong>Provisional:</strong> the latest year in a Mortality Report changes as records arrive. Provisional points are drawn hollow. Earlier releases are kept and shown as revisions.</li>
+        <li><strong>Suppressed:</strong> values DOH hides to protect privacy stay hidden. They show as gaps, never zeros.</li>
+        <li><strong>Withheld:</strong> values that fail a data check are left off the charts until confirmed. The <a href="#" data-goto="checks">Data checks</a> view explains each one.</li>
+        <li><strong>Year-to-date tables:</strong> monthly reports show January to the current month. They are never treated as full-year totals.</li>
+      </ul>
+      <h3>How overlapping reports are reconciled</h3>
+      <dl class="rules" id="rules"></dl>
+      <h3>What would make this more useful next?</h3>
+      <p>Population figures would turn counts into rates. County tables would allow maps and comparisons between places. Questions about whether programs work, or how health connects to education and employment, need record-level data shared under data use agreements. That is beyond what public reports can answer.</p>
+      <button id="download" type="button">Download all values (CSV)</button>
+    </article>
+  </section>
+
+  <footer>South Dakota Health Outcomes · Demonstration using Department of Health public reports. Not an official state service.</footer>
+</main>
+<div id="tip" class="tip" role="tooltip" hidden></div>
+<script src="app.js"></script>
+</body>
+</html>
