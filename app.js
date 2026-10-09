@@ -70,51 +70,109 @@ document.querySelectorAll('nav button').forEach((b) => (b.onclick = () => setVie
 document.addEventListener('click', (e) => { const g = e.target.closest('[data-goto]'); if (g) { e.preventDefault(); setView(g.dataset.goto); } });
 
 /* ---------- filters + table ---------- */
-function apply() {
-  const q = $('search').value.toLowerCase().trim(), topic = $('topic').value, pend = $('showPending').checked;
-  filtered = measures.filter((m) => (pend || m.headline?.latest) && (!topic || m.theme === topic) &&
-    (!q || (m.short_label + ' ' + m.label).toLowerCase().includes(q)));
+const PER_PAGE = 20;
+const SMALL = 20;                       // average deaths a year below which a cause is a "small count"
+let page = 0, cats = { order: [], series: {}, counts: {} };
+const isSmall = (m) => { const v = pointsOf(m).filter((p) => p.value != null).map((p) => p.value); return v.length && v.reduce((a, b) => a + b, 0) / v.length < SMALL; };
+const isTotal = (m) => m.kind === 'total';
+
+function causeOptions() {
+  const cat = $('category').value;
+  const pool = measures.filter((m) => !isTotal(m) && m.headline?.latest && (!cat || m.category === cat))
+    .sort((a, b) => a.short_label.localeCompare(b.short_label));
+  const keep = $('cause').value;
+  $('cause').innerHTML = `<option value="">${cat ? `All ${pool.length} causes in ${esc(cat)}` : `All ${pool.length} causes`}</option>` +
+    pool.map((m) => `<option value="${m.id}">${esc(m.short_label)}</option>`).join('');
+  $('cause').value = pool.some((m) => m.id === keep) ? keep : '';
+}
+
+function apply(resetPage = true) {
+  const q = $('search').value.toLowerCase().trim(), cat = $('category').value, cause = $('cause').value, small = $('showSmall').checked;
+  filtered = measures.filter((m) => {
+    if (!m.headline?.latest) return false;
+    if (cause) return m.id === cause;
+    if (cat && m.category !== cat) return false;
+    if (!small && isSmall(m)) return false;
+    if (q && !(m.short_label + ' ' + m.label + ' ' + (m.codes || '') + ' ' + (m.category || '')).toLowerCase().includes(q)) return false;
+    return true;
+  });
   const key = (m) => sortKey === 'label' ? m.short_label : sortKey === 'latest' ? m.headline?.latest?.value
     : sortKey === 'oneyr' ? m.headline?.change?.pct : longChange(m)?.pct;
   filtered.sort((a, b) => {
+    if (isTotal(a) !== isTotal(b)) return isTotal(a) ? -1 : 1;     // totals stay on top as the reference
     const ka = key(a), kb = key(b);
     if (ka == null) return kb == null ? a.short_label.localeCompare(b.short_label) : 1;
     if (kb == null) return -1;
     const n = sortKey === 'label' ? ka.localeCompare(kb) : ka - kb;
     return (sortDir === 'asc' ? n : -n) || a.short_label.localeCompare(b.short_label);
   });
-  if (!filtered.some((m) => m.id === chosen && m.headline?.latest)) chosen = filtered.find((m) => m.headline?.latest)?.id || null;
+  if (resetPage) page = 0;
+  if (cause) chosen = cause;
+  else if (!filtered.some((m) => m.id === chosen)) chosen = filtered.find((m) => !isTotal(m))?.id || filtered[0]?.id || null;
   render();
 }
-['search', 'topic', 'showPending'].forEach((id) => $(id).addEventListener('input', apply));
-$('reset').onclick = () => { $('search').value = ''; $('topic').value = ''; $('showPending').checked = false; apply(); };
+$('search').addEventListener('input', () => apply());
+$('showSmall').addEventListener('input', () => apply());
+$('category').addEventListener('input', () => { $('cause').value = ''; causeOptions(); apply(); });
+$('cause').addEventListener('input', () => { if ($('cause').value) $('search').value = ''; apply(); });
+$('reset').onclick = () => { $('search').value = ''; $('category').value = ''; $('showSmall').checked = true; causeOptions(); apply(); };
+$('prev').onclick = () => { page--; render(); };
+$('next').onclick = () => { page++; render(); };
 document.querySelectorAll('[data-sort]').forEach((b) => (b.onclick = () => {
   sortDir = sortKey === b.dataset.sort ? (sortDir === 'desc' ? 'asc' : 'desc') : (b.dataset.sort === 'label' ? 'asc' : 'desc');
   sortKey = b.dataset.sort; apply();
 }));
+function setCategory(cat) { $('category').value = cat; $('cause').value = ''; causeOptions(); apply(); }
+
+/* Category panel: latest-year deaths per category as bars, with change since the base year. */
+function renderCategories() {
+  const ry = cats.rank_year, cur = $('category').value;
+  const rows = cats.order.map((c) => {
+    const s = Object.fromEntries(cats.series[c] || []);
+    const base = s[BASE_YEAR], now = s[ry];
+    return { c, now, pct: base ? (now - base) / base * 100 : null, n: cats.counts[c] || 0, spark: cats.series[c] };
+  }).sort((a, b) => b.now - a.now);
+  const max = Math.max(...rows.map((r) => r.now));
+  const cov = (cats.coverage || []).slice(-1)[0];
+  $('catnote').innerHTML = `Every cause in DOH’s <em>Causes of Death</em> table, grouped by type. Bars show ${ry} deaths, excluding infants.` +
+    (cov ? ` Listed causes account for ${fmt(cov[1])} of ${fmt(cov[2])} deaths in ${cov[0]} (${fmt(Math.round(cov[1] / cov[2] * 100))}%); DOH doesn’t list the rest by cause.` : '') +
+    ` Choose a category to filter.`;
+  $('catbars').innerHTML = rows.map((r) => `<button type="button" class="catrow${cur === r.c ? ' on' : ''}" data-cat="${esc(r.c)}" aria-pressed="${cur === r.c}">
+      <span class="catname">${esc(r.c)}<small>${r.n} cause${r.n === 1 ? '' : 's'}</small></span>
+      <span class="cattrack"><span class="catfill" style="width:${(r.now / max * 100).toFixed(1)}%"></span></span>
+      <span class="catval">${fmt(r.now)}</span>
+      <span class="catchg">${changeHTML(r.pct)}<small>since ${BASE_YEAR}</small></span></button>`).join('') +
+    (cur ? `<button type="button" class="subtle clearcat" data-cat="">Show all categories</button>` : '');
+  $('catbars').querySelectorAll('[data-cat]').forEach((b) => (b.onclick = () => setCategory(b.dataset.cat === cur ? '' : b.dataset.cat)));
+}
 
 function render() {
   ['label', 'latest', 'oneyr', 'long'].forEach((k) => {
     $('heading-' + k).setAttribute('aria-sort', sortKey === k ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none');
     $('caret-' + k).textContent = sortKey === k && sortDir === 'asc' ? '▴' : '▾';
   });
-  const active = filtered.filter((m) => m.headline?.latest);
-  $('status').textContent = `${active.length} measure${active.length === 1 ? '' : 's'} match your filters · Statewide data`;
-  $('rows').innerHTML = filtered.map((m) => {
-    const h = m.headline;
-    if (!h?.latest) {
-      return `<tr class="pending"><td>${esc(m.short_label)}<br><span class="badge pend">${m.status === 'pending' ? 'Table not mapped yet' : 'No values yet'}</span></td><td>–</td><td>–</td><td>–</td></tr>`;
-    }
-    const lc = longChange(m);
+  const causesShown = filtered.filter((m) => !isTotal(m)).length;
+  const cat = $('category').value;
+  $('status').textContent = `${causesShown} cause${causesShown === 1 ? '' : 's'} of death match your filters${cat ? ` in ${cat}` : ''} · Statewide data`;
+  $('listtitle').textContent = cat ? `${cat}: causes of death` : 'Causes of death';
+  const pages = Math.max(1, Math.ceil(filtered.length / PER_PAGE));
+  page = Math.max(0, Math.min(page, pages - 1));
+  $('page').textContent = `Page ${page + 1} of ${pages}`;
+  $('prev').disabled = page === 0; $('next').disabled = page >= pages - 1;
+  $('rows').innerHTML = filtered.slice(page * PER_PAGE, (page + 1) * PER_PAGE).map((m) => {
+    const h = m.headline, lc = longChange(m), small = isSmall(m);
     const held = pointsOf(m).some((p) => p.withheld);
-    return `<tr class="${chosen === m.id ? 'selected' : ''}">
+    const sub = isTotal(m) ? `${esc(h.label)} · reference total` : `${esc(m.category)}${m.codes ? ` · ${esc(m.codes)}` : ''}`;
+    return `<tr class="${chosen === m.id ? 'selected' : ''}${isTotal(m) ? ' total' : ''}${small ? ' small' : ''}">
       <td><button class="pick" data-id="${m.id}" aria-pressed="${chosen === m.id}">${esc(m.short_label)}</button><br>
-        <span class="muted">${esc(h.label)}</span>${h.latest.provisional ? ' <span class="badge prov">Provisional</span>' : ''}${held ? ' <span class="badge withheld">Value withheld</span>' : ''}</td>
+        <span class="muted">${sub}</span>${m.rank ? ` <span class="muted">· #${m.rank.rank}</span>` : ''}
+        ${h.latest.provisional ? ' <span class="badge prov">Provisional</span>' : ''}${held ? ' <span class="badge withheld">Value withheld</span>' : ''}${small ? ' <span class="badge pend">Small count</span>' : ''}</td>
       <td><strong>${fmt(h.latest.value)}</strong><br><span class="muted">${esc(h.latest.period)}</span></td>
       <td>${changeHTML(h.change?.pct)}${h.change ? `<br><span class="muted">vs ${esc(h.change.from_period)}</span>` : ''}</td>
       <td>${changeHTML(lc?.pct, lc || {})}${lc ? `<br><span class="muted">${lc.from}–${lc.to}</span>` : ''}</td></tr>`;
-  }).join('') || `<tr><td colspan="4">No measures match. <button class="subtle" type="button" onclick="document.getElementById('reset').click()">Reset filters</button></td></tr>`;
+  }).join('') || `<tr><td colspan="4">No causes match. <button class="subtle" type="button" onclick="document.getElementById('reset').click()">Reset filters</button></td></tr>`;
   $('rows').querySelectorAll('button.pick').forEach((b) => (b.onclick = () => selectMeasure(b.dataset.id)));
+  renderCategories();
   renderDetail();
   if (view === 'compare') renderCompare();
 }
@@ -149,8 +207,10 @@ async function renderDetail() {
   const inCompare = compare.some((c) => c.id === m.id);
 
   box.innerHTML = `
-    <p class="eyebrow">${esc(themes.find((t) => t.id === m.theme)?.title?.toUpperCase() || 'MEASURE')}</p>
+    <p class="eyebrow">${esc((m.category || 'Measure').toUpperCase())}</p>
     <h2>${esc(ind.label)}</h2>
+    ${m.codes || m.rank ? `<p class="scope">${m.codes ? `ICD-10 ${esc(m.codes)}` : ''}${m.codes && m.rank ? ' · ' : ''}${m.rank ? `${m.rank.tied ? 'Tied at ' : ''}#${m.rank.rank} of ${m.rank.of} listed causes in ${m.rank.year}` : ''}</p>` : ''}
+    ${isSmall(m) ? '<p class="note">Small count: fewer than 20 deaths a year on average, so year-to-year changes are mostly chance.</p>' : ''}
     ${series.length > 1 ? `<div class="segsel" role="group" aria-label="Which count">${series.map((x) =>
       `<button type="button" data-series="${x.key}" aria-pressed="${x.key === s.key}">${esc(x.label)}</button>`).join('')}</div>`
       : `<p class="scope">${esc(s.label)}</p>`}
@@ -412,7 +472,7 @@ function renderShift() {
 
 function renderCompare() {
   const mode = document.querySelector('input[name=cmode]:checked').value;
-  const avail = filtered.filter((m) => m.headline?.latest);
+  const avail = filtered.filter((m) => m.headline?.latest && !isTotal(m));
   $('picker').innerHTML = avail.map((m) => {
     const c = compare.find((x) => x.id === m.id);
     return `<label><input type="checkbox" value="${m.id}" ${c ? 'checked' : ''} ${!c && compare.length >= MAX_COMPARE ? 'disabled' : ''}>
@@ -482,7 +542,7 @@ function renderReports() {
 /* ---------- start ---------- */
 async function init() {
   try {
-    [meta, catalog, themes, reports, methods, rel] = await Promise.all(['meta.json', 'catalog.json', 'themes.json', 'reports.json', 'methods.json', 'relationships.json'].map(getJSON));
+    [meta, catalog, themes, reports, methods, rel, cats] = await Promise.all(['meta.json', 'catalog.json', 'themes.json', 'reports.json', 'methods.json', 'relationships.json', 'categories.json'].map(getJSON));
   } catch (e) {
     $('status').innerHTML = `<strong>The data didn’t load.</strong> ${esc(e.message)}. Open this page through a web server, for example <code>python -m http.server 8000</code>.`;
     return;
@@ -493,13 +553,15 @@ async function init() {
   $('edition').innerHTML = `STATEWIDE SNAPSHOT<br><strong>${y0}–${y1}</strong><br>${meta.counts.reports} DOH reports`;
   $('builtinfo').textContent = `Built ${meta.built_at.slice(0, 10)} from ${meta.counts.reports} reports.`;
   document.querySelectorAll('.baseyr').forEach((e) => (e.textContent = BASE_YEAR));
-  $('topic').innerHTML += themes.map((t) => `<option value="${t.id}">${esc(t.title)}</option>`).join('');
+  $('category').innerHTML += cats.order.map((c) => `<option value="${esc(c)}">${esc(c)} (${cats.counts[c] || 0})</option>`).join('');
+  causeOptions();
   $('rdomain').innerHTML += Object.entries(DOMAINS).filter(([k]) => reports.some((r) => r.domain === k)).map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join('');
-  const active = measures.filter((m) => m.headline?.latest).length;
+  const causeList = measures.filter((m) => !isTotal(m) && m.headline?.latest);
+  const causeCount = causeList.length, smallCount = causeList.filter(isSmall).length;
   const errors = (methods.validation || []).filter((v) => v.severity === 'error').length;
   const heldIds = measures.filter((m) => pointsOf(m).some((p) => p.withheld)).map((m) => m.id);
   $('metrics').innerHTML = `
-    <div class="metric"><span>Measures with data</span><strong>${active}</strong><small>of ${measures.length} defined; ${measures.length - active} waiting on table mapping</small></div>
+    <div class="metric"><span>Causes of death tracked</span><strong>${causeCount}</strong><small>In ${cats.order.length} categories. ${smallCount} average fewer than ${SMALL} deaths a year.</small></div>
     <div class="metric"><span>Values traced to a report page</span><strong>${fmt(meta.counts.rows)}</strong><small>From ${reports.filter((r) => r.used_by.length).length} of ${meta.counts.reports} DOH reports so far</small></div>
     <div class="metric"><span>Values withheld</span><strong>${meta.counts.withheld}</strong><small>${errors} open data check${errors === 1 ? '' : 's'}.${heldIds.length ? ` <a href="#" data-measure="${heldIds[0]}">See ${esc(nameOf(heldIds[0]))}</a>` : ''}</small></div>`;
   $('rules').innerHTML = (methods.rules || []).map((r) => `<dt>${esc(r.problem)}</dt><dd>${esc(r.rule)}</dd>`).join('');

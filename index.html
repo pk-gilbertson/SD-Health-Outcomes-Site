@@ -32,9 +32,10 @@
   </nav>
 
   <section id="filters" class="filters">
-    <label>Find a measure<input id="search" type="search" placeholder="Try suicide, cancer, falls…"></label>
-    <label>Topic<select id="topic"><option value="">All topics</option></select></label>
-    <label class="check"><input type="checkbox" id="showPending"> Include measures not mapped yet</label>
+    <label>Find a cause of death<input id="search" type="search" placeholder="Try diverticular, falls, or an ICD code like K57…"></label>
+    <label>Category<select id="category"><option value="">All categories</option></select></label>
+    <label>Cause<select id="cause"><option value="">All causes in this category</option></select></label>
+    <label class="check"><input type="checkbox" id="showSmall" checked> Include small counts</label>
     <button id="reset" class="subtle" type="button">Reset</button>
   </section>
   <div id="status" role="status">Loading public data…</div>
@@ -42,19 +43,27 @@
   <!-- Explore -->
   <section id="explore" class="view">
     <div id="metrics" class="metrics"></div>
+    <article class="panel">
+      <div class="panelhead"><div>
+        <h2>Deaths by category</h2>
+        <p id="catnote">Every cause in DOH’s Causes of Death table, grouped by type. Choose a category to filter the list below.</p>
+      </div></div>
+      <div id="catbars" class="catbars"></div>
+    </article>
     <div class="workspace">
       <section class="panel">
-        <div class="panelhead"><div><h2>Measures to explore</h2><p>Choose a measure to see its trend, sources, and revisions.</p></div></div>
-        <p class="note">These are counts of deaths, not rates. A rising count can reflect a growing or aging population.</p>
+        <div class="panelhead"><div><h2 id="listtitle">Causes of death</h2><p>Choose a cause to see its trend, where it ranks, and the report page each number comes from.</p></div></div>
+        <p class="note">These are counts of deaths, not rates. A rising count can reflect a growing or aging population. Causes averaging fewer than 20 deaths a year are marked <span class="badge pend">Small count</span>; their percent changes swing widely from chance alone.</p>
         <div class="tablewrap"><table>
           <thead><tr>
-            <th id="heading-label" scope="col" aria-sort="none"><button class="column-sort" data-sort="label">Measure<span id="caret-label" aria-hidden="true">▾</span></button></th>
+            <th id="heading-label" scope="col" aria-sort="none"><button class="column-sort" data-sort="label">Cause<span id="caret-label" aria-hidden="true">▾</span></button></th>
             <th id="heading-latest" scope="col" aria-sort="none"><button class="column-sort" data-sort="latest">Latest<span id="caret-latest" aria-hidden="true">▾</span></button></th>
             <th id="heading-oneyr" scope="col" aria-sort="none"><button class="column-sort" data-sort="oneyr">1-year change<span id="caret-oneyr" aria-hidden="true">▾</span></button></th>
             <th id="heading-long" scope="col" aria-sort="none"><button class="column-sort" data-sort="long">Change since <span class="baseyr">2015</span><span id="caret-long" aria-hidden="true">▾</span></button></th>
           </tr></thead>
           <tbody id="rows"></tbody>
         </table></div>
+        <div class="pager"><button id="prev" type="button">Previous</button><span id="page"></span><button id="next" type="button">Next</button></div>
       </section>
       <aside class="panel detail" id="detail" aria-live="polite"></aside>
     </div>
@@ -136,6 +145,13 @@
       </ul>
       <h3>How overlapping reports are reconciled</h3>
       <dl class="rules" id="rules"></dl>
+      <h3>Causes and categories</h3>
+      <p>Every row of DOH’s <em>Causes of Death</em> table is its own cause on this site, with the name and ICD-10 codes DOH printed. Categories group those causes by the chapter of their ICD-10 code, with a few changes so injuries are grouped by intent (unintentional versus suicide, homicide, and violence) and dementia sits with brain conditions. The grouping was built for this site and has not been reviewed by DOH.</p>
+      <ul>
+        <li><strong>Listed causes don’t cover every death.</strong> DOH lists causes with roughly ten or more deaths over the decade. Together they account for about 96% of deaths excluding infants.</li>
+        <li><strong>A few rows overlap.</strong> For example, “Huffing (X46, X47, X49)” and “Carbon monoxide (X47)” share a code, so category totals can count a handful of deaths twice.</li>
+        <li><strong>Rows that change definition stay separate.</strong> When DOH changes a row’s ICD codes between editions (such as bloodstream infections, A49 to A49.1–A49.8), the old and new versions are not joined into one line.</li>
+      </ul>
       <h3>Data checks</h3>
       <p>Before a value appears, the pipeline checks each table’s own arithmetic and compares reports that cover the same years:</p>
       <ul>
